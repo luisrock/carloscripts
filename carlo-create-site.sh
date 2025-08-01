@@ -238,13 +238,16 @@ case $FRAMEWORK in
     flask)
         echo "Flask==3.0.0" >> "$SITE_DIR/public/requirements.txt"
         echo "Werkzeug==3.0.1" >> "$SITE_DIR/public/requirements.txt"
+        echo "gunicorn==21.2.0" >> "$SITE_DIR/public/requirements.txt"
         ;;
     django)
         echo "Django==5.0.0" >> "$SITE_DIR/public/requirements.txt"
+        echo "gunicorn==21.2.0" >> "$SITE_DIR/public/requirements.txt"
         ;;
     fastapi)
         echo "fastapi==0.104.1" >> "$SITE_DIR/public/requirements.txt"
         echo "uvicorn==0.24.0" >> "$SITE_DIR/public/requirements.txt"
+        echo "gunicorn==21.2.0" >> "$SITE_DIR/public/requirements.txt"
         ;;
 esac
 
@@ -289,13 +292,26 @@ fi
 pip install --upgrade pip
 pip install -r requirements.txt
 
+# Criar arquivo de configuração do Gunicorn
+cat > "$SITE_DIR/gunicorn.conf" << EOF
+bind = "127.0.0.1:$PORT"
+workers = 2
+worker_class = "sync"
+worker_connections = 1000
+timeout = 30
+keepalive = 2
+max_requests = 1000
+max_requests_jitter = 50
+preload_app = True
+EOF
+
 # Criar arquivo de configuração do supervisor
 SUPERVISOR_CONF="/etc/supervisor/conf.d/$DOMAIN.conf"
 log "Configurando supervisor..."
 
 sudo tee "$SUPERVISOR_CONF" > /dev/null << EOF
 [program:$DOMAIN]
-command=$SITE_DIR/public/venv/bin/python $SITE_DIR/public/app.py
+command=$SITE_DIR/public/venv/bin/gunicorn -c $SITE_DIR/gunicorn.conf app:app
 directory=$SITE_DIR/public
 user=vito
 autostart=false
@@ -317,6 +333,11 @@ server {
     # Logs
     access_log $SITE_DIR/logs/access.log;
     error_log $SITE_DIR/logs/error.log;
+    
+    # Let's Encrypt validation
+    location /.well-known/acme-challenge/ {
+        root /home/carlo/webroot;
+    }
     
     # Proxy para Python
     location / {

@@ -112,8 +112,6 @@ read_config() {
             cat "$NGINX_CONF"
             echo ""
             echo "=== FIM DA CONFIGURAÇÃO ==="
-            log "Arquivo nginx.conf lido com sucesso para $DOMAIN"
-            log "Localização: $NGINX_CONF"
         fi
     else
         if [ "$JSON_OUTPUT" = true ]; then
@@ -121,7 +119,6 @@ read_config() {
         else
             warning "Configuração Nginx não encontrada para $DOMAIN"
             echo "Execute: ./carlo-create-site.sh $DOMAIN <port> para criar a configuração"
-            log "Localização: $NGINX_CONF"
         fi
     fi
 }

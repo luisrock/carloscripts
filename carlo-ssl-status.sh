@@ -61,7 +61,7 @@ get_ssl_status() {
         else
             echo -e "${RED}❌ $domain: Site não encontrado${NC}"
         fi
-        return 1
+        return 0
     fi
     
     # Verificar se tem certificado SSL
@@ -71,7 +71,7 @@ get_ssl_status() {
         else
             echo -e "${YELLOW}⚠️  $domain: Sem certificado SSL${NC}"
         fi
-        return 1
+        return 0
     fi
     
     # Obter informações do certificado

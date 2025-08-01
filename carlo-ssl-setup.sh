@@ -157,6 +157,11 @@ server {
     access_log $SITE_DIR/logs/access.log;
     error_log $SITE_DIR/logs/error.log;
     
+    # Let's Encrypt validation
+    location /.well-known/acme-challenge/ {
+        root /home/carlo/webroot;
+    }
+    
     # Proxy para Python
     location / {
         proxy_pass http://127.0.0.1:$PORT;
@@ -187,7 +192,7 @@ log "Gerando certificado SSL..."
 
 # Comando certbot
 CERTBOT_CMD="sudo certbot certonly --webroot \
-    --webroot-path=/home/carlo/sites/$DOMAIN/public \
+    --webroot-path=/home/carlo/webroot \
     --email $EMAIL \
     --agree-tos \
     --no-eff-email \
@@ -205,9 +210,28 @@ if eval $CERTBOT_CMD; then
     
     # Copiar certificados para diretório Carlo
     log "Copiando certificados..."
-    sudo cp -r "/etc/letsencrypt/live/$DOMAIN" "/home/carlo/ssl/$DOMAIN/"
-    sudo cp -r "/etc/letsencrypt/archive/$DOMAIN" "/home/carlo/ssl/$DOMAIN/"
+    
+    # Criar estrutura de diretórios
+    sudo mkdir -p "/home/carlo/ssl/$DOMAIN/live"
+    sudo mkdir -p "/home/carlo/ssl/$DOMAIN/archive"
+    
+    # Copiar certificados para live
+    sudo cp "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" "/home/carlo/ssl/$DOMAIN/live/"
+    sudo cp "/etc/letsencrypt/live/$DOMAIN/privkey.pem" "/home/carlo/ssl/$DOMAIN/live/"
+    sudo cp "/etc/letsencrypt/live/$DOMAIN/cert.pem" "/home/carlo/ssl/$DOMAIN/live/"
+    sudo cp "/etc/letsencrypt/live/$DOMAIN/chain.pem" "/home/carlo/ssl/$DOMAIN/live/"
+    
+    # Copiar certificados para archive (se existir)
+    if [ -d "/etc/letsencrypt/archive/$DOMAIN" ] && [ "$(ls -A "/etc/letsencrypt/archive/$DOMAIN" 2>/dev/null)" ]; then
+        sudo cp -r "/etc/letsencrypt/archive/$DOMAIN/"* "/home/carlo/ssl/$DOMAIN/archive/"
+    else
+        log "Diretório archive não encontrado ou vazio, pulando..."
+    fi
+    
+    # Ajustar permissões
     sudo chown -R vito:vito "/home/carlo/ssl/$DOMAIN"
+    sudo chmod 644 "/home/carlo/ssl/$DOMAIN/live/"*.pem
+    sudo chmod 600 "/home/carlo/ssl/$DOMAIN/live/privkey.pem"
     
     # Criar configuração Nginx com SSL
     log "Configurando Nginx com SSL..."
@@ -220,14 +244,14 @@ server {
 }
 
 server {
-    listen 443 ssl http2;
+    listen 443 ssl;
     server_name $DOMAIN www.$DOMAIN;
     
     # SSL Configuration
     ssl_certificate /home/carlo/ssl/$DOMAIN/live/fullchain.pem;
     ssl_certificate_key /home/carlo/ssl/$DOMAIN/live/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384;
+    ssl_ciphers HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers off;
     ssl_session_cache shared:SSL:10m;
     ssl_session_timeout 10m;
