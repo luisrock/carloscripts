@@ -106,8 +106,23 @@ case $LOG_TYPE in
         LOG_DESC="Nginx Error"
         ;;
     supervisor)
-        LOG_FILE="/var/log/supervisor/$DOMAIN-stderr.log"
+        LOG_FILE="supervisorctl"
         LOG_DESC="Supervisor"
+        # Para supervisor, verificar se o processo existe
+        if ! sudo supervisorctl status "$DOMAIN" >/dev/null 2>&1; then
+            error "Processo Supervisor para $DOMAIN não encontrado"
+            echo ""
+            echo "💡 Possíveis razões:"
+            echo "   - O site não foi configurado no Supervisor"
+            echo "   - O site foi removido do Supervisor"
+            echo "   - Há um problema na configuração"
+            echo ""
+            echo "🔧 Comandos úteis:"
+            echo "   sudo supervisorctl status"
+            echo "   sudo supervisorctl reread"
+            echo "   sudo supervisorctl update"
+            exit 1
+        fi
         ;;
     *)
         error "Tipo de log inválido: $LOG_TYPE"
@@ -116,8 +131,8 @@ case $LOG_TYPE in
         ;;
 esac
 
-# Verificar se o arquivo de log existe
-if [ ! -f "$LOG_FILE" ]; then
+# Verificar se o arquivo de log existe (exceto para supervisor)
+if [ "$LOG_FILE" != "supervisorctl" ] && [ ! -f "$LOG_FILE" ]; then
     error "Arquivo de log não encontrado: $LOG_FILE"
     echo ""
     echo "📁 Arquivos de log disponíveis para $DOMAIN:"
@@ -139,16 +154,21 @@ echo ""
 echo "🔍 Informações:"
 echo "   Domínio: $DOMAIN"
 echo "   Tipo: $LOG_DESC"
-echo "   Arquivo: $LOG_FILE"
-echo "   Tamanho: $(du -h "$LOG_FILE" 2>/dev/null | cut -f1 || echo 'desconhecido')"
+if [ "$LOG_FILE" = "supervisorctl" ]; then
+    echo "   Fonte: supervisorctl tail"
+    echo "   Status: $(sudo supervisorctl status "$DOMAIN" | awk '{print $2}')"
+else
+    echo "   Arquivo: $LOG_FILE"
+    echo "   Tamanho: $(du -h "$LOG_FILE" 2>/dev/null | cut -f1 || echo 'desconhecido')"
+fi
 echo "   Linhas: $LINES"
 if [ "$FOLLOW" = true ]; then
     echo "   Modo: Seguindo em tempo real"
 fi
 echo ""
 
-# Verificar se o arquivo está vazio
-if [ ! -s "$LOG_FILE" ]; then
+# Verificar se o arquivo está vazio (exceto para supervisor)
+if [ "$LOG_FILE" != "supervisorctl" ] && [ ! -s "$LOG_FILE" ]; then
     echo -e "${YELLOW}⚠️  Arquivo de log está vazio${NC}"
     echo ""
     echo "💡 Possíveis razões:"
@@ -167,12 +187,24 @@ fi
 echo -e "${GREEN}📄 Últimas $LINES linhas do log:${NC}"
 echo ""
 
-if [ "$FOLLOW" = true ]; then
-    echo -e "${PURPLE}🔄 Seguindo logs em tempo real... (Ctrl+C para parar)${NC}"
-    echo ""
-    tail -f -n "$LINES" "$LOG_FILE"
+if [ "$LOG_FILE" = "supervisorctl" ]; then
+    # Para supervisor, usar supervisorctl tail
+    if [ "$FOLLOW" = true ]; then
+        echo -e "${PURPLE}🔄 Seguindo logs em tempo real... (Ctrl+C para parar)${NC}"
+        echo ""
+        sudo supervisorctl tail -f "$DOMAIN"
+    else
+        sudo supervisorctl tail "$DOMAIN" | tail -n "$LINES"
+    fi
 else
-    tail -n "$LINES" "$LOG_FILE"
+    # Para arquivos normais, usar tail
+    if [ "$FOLLOW" = true ]; then
+        echo -e "${PURPLE}🔄 Seguindo logs em tempo real... (Ctrl+C para parar)${NC}"
+        echo ""
+        tail -f -n "$LINES" "$LOG_FILE"
+    else
+        tail -n "$LINES" "$LOG_FILE"
+    fi
 fi
 
 echo ""

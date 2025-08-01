@@ -75,23 +75,42 @@ get_sites_info() {
     sites_running=0
     sites_stopped=0
     sites_total=0
+    sites_with_errors=0
+    sites_high_usage=0
+    total_disk_usage="0"
     
     if [ -d "/home/carlo/sites" ]; then
+        # Calcular uso total de disco dos sites (rápido)
+        total_disk_usage=$(du -sh /home/carlo/sites 2>/dev/null | cut -f1 || echo "0")
+        
         for site_dir in /home/carlo/sites/*/; do
             if [ -d "$site_dir" ]; then
                 domain=$(basename "$site_dir")
                 ((sites_total++))
                 
+                # Verificar status do supervisor (rápido)
                 if sudo supervisorctl status "$domain" 2>/dev/null | grep -q "RUNNING"; then
                     ((sites_running++))
+                    
+                    # Verificar se tem erros recentes (rápido - apenas últimas 10 linhas)
+                    if [ -f "$site_dir/logs/error.log" ]; then
+                        error_count=$(tail -n 10 "$site_dir/logs/error.log" 2>/dev/null | grep -c "ERROR\|CRITICAL\|FATAL" 2>/dev/null || echo "0")
+                        if [ "${error_count:-0}" -gt 0 ]; then
+                            ((sites_with_errors++))
+                        fi
+                    fi
                 else
                     ((sites_stopped++))
                 fi
             fi
         done
+        
+        # Verificar sites com alto uso de recursos (rápido - apenas contador)
+        high_usage_count=$(ps aux | grep -E "(gunicorn|python)" | grep -v grep | awk '{if($3 > 5.0 || $4 > 10.0) print}' | wc -l)
+        sites_high_usage=$high_usage_count
     fi
     
-    echo "{\"total\":$sites_total,\"running\":$sites_running,\"stopped\":$sites_stopped}"
+    echo "{\"total\":$sites_total,\"running\":$sites_running,\"stopped\":$sites_stopped,\"with_errors\":$sites_with_errors,\"high_usage\":$sites_high_usage,\"total_disk_usage\":\"$total_disk_usage\"}"
 }
 
 # Função para obter informações dos serviços
@@ -117,7 +136,7 @@ get_services_info() {
     echo "{\"nginx\":\"$nginx_status\",\"mysql\":\"$mysql_status\",\"supervisor\":\"$supervisor_status\"}"
 }
 
-# Função para obter informações detalhadas
+# Função para obter informações detalhadas (apenas quando --detailed)
 get_detailed_info() {
     # Processos Python
     python_processes=$(ps aux | grep python | grep -v grep | wc -l)
@@ -134,7 +153,49 @@ get_detailed_info() {
     # Últimos backups
     backup_count=$(find /home/carlo/backups -name "*.tar.gz" 2>/dev/null | wc -l)
     
-    echo "{\"python_processes\":$python_processes,\"ports_in_use\":$ports_in_use,\"log_files\":$log_files,\"sites_size\":\"$sites_size\",\"backup_count\":$backup_count}"
+    # Sites com problemas detalhados
+    sites_with_problems=()
+    if [ -d "/home/carlo/sites" ]; then
+        for site_dir in /home/carlo/sites/*/; do
+            if [ -d "$site_dir" ]; then
+                domain=$(basename "$site_dir")
+                
+                # Verificar se site tem problemas
+                has_errors=false
+                high_usage=false
+                
+                # Verificar erros
+                if [ -f "$site_dir/logs/error.log" ]; then
+                    error_count=$(tail -n 20 "$site_dir/logs/error.log" 2>/dev/null | grep -c "ERROR\|CRITICAL\|FATAL" 2>/dev/null || echo "0")
+                    if [ "${error_count:-0}" -gt 0 ]; then
+                        has_errors=true
+                    fi
+                fi
+                
+                # Verificar uso de recursos
+                if sudo supervisorctl status "$domain" 2>/dev/null | grep -q "RUNNING"; then
+                    # Verificar CPU e memória do processo
+                    process_info=$(ps aux | grep "$domain" | grep -v grep | head -1)
+                    if [ ! -z "$process_info" ]; then
+                        cpu_usage=$(echo "$process_info" | awk '{print $3}')
+                        mem_usage=$(echo "$process_info" | awk '{print $4}')
+                        if (( $(echo "$cpu_usage > 5.0" | bc -l) )) || (( $(echo "$mem_usage > 10.0" | bc -l) )); then
+                            high_usage=true
+                        fi
+                    fi
+                fi
+                
+                if [ "$has_errors" = true ] || [ "$high_usage" = true ]; then
+                    sites_with_problems+=("$domain")
+                fi
+            fi
+        done
+    fi
+    
+    # Converter array para JSON
+    problems_json=$(printf '%s\n' "${sites_with_problems[@]}" | jq -R . | jq -s .)
+    
+    echo "{\"python_processes\":$python_processes,\"ports_in_use\":$ports_in_use,\"log_files\":$log_files,\"sites_size\":\"$sites_size\",\"backup_count\":$backup_count,\"sites_with_problems\":$problems_json}"
 }
 
 # Coletar todas as informações
@@ -184,11 +245,17 @@ else
     sites_total=$(echo "$sites_info" | jq -r '.total')
     sites_running=$(echo "$sites_info" | jq -r '.running')
     sites_stopped=$(echo "$sites_info" | jq -r '.stopped')
+    sites_with_errors=$(echo "$sites_info" | jq -r '.with_errors')
+    sites_high_usage=$(echo "$sites_info" | jq -r '.high_usage')
+    total_disk_usage=$(echo "$sites_info" | jq -r '.total_disk_usage')
     
     echo -e "${GREEN}🐍 SITES PYTHON${NC}"
     echo "   Total: $sites_total"
     echo "   Rodando: $sites_running"
     echo "   Parados: $sites_stopped"
+    echo "   Com erros: $sites_with_errors"
+    echo "   Alto uso: $sites_high_usage"
+    echo "   Espaço total: $total_disk_usage"
     echo ""
     
     # Informações dos serviços
@@ -209,6 +276,7 @@ else
         log_files=$(echo "$detailed_info" | jq -r '.log_files')
         sites_size=$(echo "$detailed_info" | jq -r '.sites_size')
         backup_count=$(echo "$detailed_info" | jq -r '.backup_count')
+        sites_with_problems=$(echo "$detailed_info" | jq -r '.sites_with_problems[]' 2>/dev/null || echo "")
         
         echo -e "${YELLOW}📈 DETALHES${NC}"
         echo "   Processos Python: $python_processes"
@@ -216,6 +284,12 @@ else
         echo "   Arquivos de log: $log_files"
         echo "   Tamanho dos sites: $sites_size"
         echo "   Backups: $backup_count"
+        if [ ! -z "$sites_with_problems" ]; then
+            echo "   Sites com problemas:"
+            echo "$sites_with_problems" | while read -r site; do
+                echo "     - $site"
+            done
+        fi
         echo ""
     fi
     
@@ -245,10 +319,20 @@ else
         echo -e "   Disco: ${GREEN}NORMAL${NC} (<60%)"
     fi
     
+    # Alertas específicos
+    if [ "$sites_with_errors" -gt 0 ]; then
+        echo -e "   Sites com erros: ${RED}ATENÇÃO${NC} ($sites_with_errors sites)"
+    fi
+    
+    if [ "$sites_high_usage" -gt 0 ]; then
+        echo -e "   Sites com alto uso: ${YELLOW}MONITORAR${NC} ($sites_high_usage sites)"
+    fi
+    
     echo ""
     echo -e "${CYAN}💡 Comandos úteis:${NC}"
     echo "   ./carlo-list-sites.sh          # Listar sites"
     echo "   ./carlo-logs.sh <domain>       # Ver logs"
     echo "   sudo supervisorctl status       # Status dos processos"
     echo "   htop                           # Monitor de processos"
+    echo "   $0 --detailed                  # Ver detalhes completos"
 fi 
