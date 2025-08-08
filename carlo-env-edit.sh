@@ -73,8 +73,11 @@ fi
 SITE_DIR="/home/carlo/sites/$DOMAIN"
 BACKUP_DIR="$SITE_DIR/backups"
 
-# Determinar localização do arquivo .env
-if [[ -d "$SITE_DIR/public" ]]; then
+# Determinar localização do arquivo .env (preferir caminho canônico em shared)
+if [[ -f "$SITE_DIR/shared/.env" || -d "$SITE_DIR/shared" ]]; then
+    ENV_FILE="$SITE_DIR/shared/.env"
+    ENV_LOCATION="shared/.env"
+elif [[ -d "$SITE_DIR/public" ]]; then
     ENV_FILE="$SITE_DIR/public/.env"
     ENV_LOCATION="public/.env"
 else
@@ -195,6 +198,11 @@ write_env_file() {
         log "Localização: $SITE_DIR/$ENV_LOCATION"
         if [[ -n "$backup_path" ]]; then
             log "Backup disponível em: $backup_path"
+        fi
+        # Atualizar symlink da release atual para garantir carregamento automático
+        if [[ -d "$SITE_DIR/current" ]]; then
+            ln -sfn "$ENV_FILE" "$SITE_DIR/current/.env"
+            log "Symlink atualizado: $SITE_DIR/current/.env -> $ENV_FILE"
         fi
         success "Configuração .env atualizada"
     else
