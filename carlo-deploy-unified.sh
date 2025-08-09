@@ -114,6 +114,20 @@ LOG_FILE="$LOGS_DIR/${TIMESTAMP}.log"
 
     log "Criando nova release: $RELEASE_TIMESTAMP"
 
+    # Determinar URL do repositório (público via HTTPS ou privado via SSH)
+    REPO_URL=""
+    if git ls-remote "https://github.com/$GITHUB_REPO.git" > /dev/null 2>&1; then
+        log "Repositório acessível via HTTPS (público)"
+        REPO_URL="https://github.com/$GITHUB_REPO.git"
+    elif git ls-remote "git@github.com:$GITHUB_REPO.git" > /dev/null 2>&1; then
+        log "Repositório acessível via SSH (privado)"
+        REPO_URL="git@github.com:$GITHUB_REPO.git"
+    else
+        error "Repositório GitHub não encontrado ou não acessível: $GITHUB_REPO"
+        echo "Verifique se o repositório existe e se você tem acesso via SSH (para repositórios privados)"
+        exit 1
+    fi
+
     # Clonar/atualizar código
     if [ -d "$SITE_DIR/repo" ]; then
         log "Atualizando repositório existente..."
@@ -123,7 +137,7 @@ LOG_FILE="$LOGS_DIR/${TIMESTAMP}.log"
         git clean -fd
     else
         log "Clonando repositório..."
-        git clone -b $BRANCH https://github.com/$GITHUB_REPO.git "$SITE_DIR/repo"
+        git clone -b $BRANCH "$REPO_URL" "$SITE_DIR/repo"
         cd "$SITE_DIR/repo"
     fi
 

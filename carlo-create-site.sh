@@ -122,23 +122,32 @@ if [ -n "$GITHUB_REPO" ]; then
     fi
     
     # Verificar se o repositório existe e é acessível
-    if ! git ls-remote "https://github.com/$GITHUB_REPO.git" > /dev/null 2>&1; then
+    # Tentar primeiro HTTPS (para repos públicos)
+    if git ls-remote "https://github.com/$GITHUB_REPO.git" > /dev/null 2>&1; then
+        log "Repositório acessível via HTTPS (público)"
+        REPO_URL="https://github.com/$GITHUB_REPO.git"
+    # Se falhar com HTTPS, tentar SSH (para repos privados)
+    elif git ls-remote "git@github.com:$GITHUB_REPO.git" > /dev/null 2>&1; then
+        log "Repositório acessível via SSH (privado)"
+        REPO_URL="git@github.com:$GITHUB_REPO.git"
+    else
         error "Repositório GitHub não encontrado ou não acessível: $GITHUB_REPO"
         echo ""
         echo "🔍 Verifique:"
         echo "   1. Se o repositório existe: https://github.com/$GITHUB_REPO"
-        echo "   2. Se é público ou você tem acesso"
+        echo "   2. Se é público ou você tem acesso via SSH"
         echo "   3. Se o nome está correto (usuario/repositorio)"
-        echo "   4. Se não há erros de digitação"
+        echo "   4. Se a chave SSH está configurada para repos privados"
+        echo "   5. Se não há erros de digitação"
         exit 1
     fi
     
     # Verificar se a branch existe
-    if ! git ls-remote --heads "https://github.com/$GITHUB_REPO.git" | grep -q "refs/heads/$GITHUB_BRANCH"; then
+    if ! git ls-remote --heads "$REPO_URL" | grep -q "refs/heads/$GITHUB_BRANCH"; then
         error "Branch '$GITHUB_BRANCH' não encontrada no repositório: $GITHUB_REPO"
         echo ""
         echo "🔍 Branches disponíveis:"
-        git ls-remote --heads "https://github.com/$GITHUB_REPO.git" | sed 's|.*refs/heads/||' | sort
+        git ls-remote --heads "$REPO_URL" | sed 's|.*refs/heads/||' | sort
         echo ""
         echo "💡 Use uma das branches listadas acima"
         exit 1
@@ -243,12 +252,17 @@ fi
 if [ -n "$GITHUB_REPO" ]; then
     log "Baixando código do GitHub: $GITHUB_REPO (branch: $GITHUB_BRANCH)"
     
+    # Usar a URL determinada na validação
+    if [ -z "$REPO_URL" ]; then
+        REPO_URL="https://github.com/$GITHUB_REPO.git"
+    fi
+    
     # Criar diretório temporário para o clone
     TEMP_DIR="/tmp/carlo_github_$$"
     mkdir -p "$TEMP_DIR"
     
     # Clonar repositório
-    if git clone -b "$GITHUB_BRANCH" "https://github.com/$GITHUB_REPO.git" "$TEMP_DIR"; then
+    if git clone -b "$GITHUB_BRANCH" "$REPO_URL" "$TEMP_DIR"; then
         log "Código baixado com sucesso"
         
         # Copiar arquivos do repositório para public/
@@ -644,6 +658,11 @@ if [ -n "$GITHUB_REPO" ]; then
     echo "   Repositório: $GITHUB_REPO"
     echo "   Branch: $GITHUB_BRANCH"
     
+    # Usar a URL determinada na validação
+    if [ -z "$REPO_URL" ]; then
+        REPO_URL="https://github.com/$GITHUB_REPO.git"
+    fi
+    
     # Criar diretório config se não existir
     mkdir -p "$SITE_DIR/config"
     
@@ -658,7 +677,7 @@ EOF
     echo ""
     echo "📥 Baixando código do GitHub..."
     cd "$SITE_DIR"
-    if git clone -b "$GITHUB_BRANCH" "https://github.com/$GITHUB_REPO.git" . 2>/dev/null || git pull origin "$GITHUB_BRANCH" 2>/dev/null; then
+    if git clone -b "$GITHUB_BRANCH" "$REPO_URL" . 2>/dev/null || git pull origin "$GITHUB_BRANCH" 2>/dev/null; then
         success "Código baixado com sucesso!"
         echo "   ✅ Repositório: $GITHUB_REPO"
         echo "   ✅ Branch: $GITHUB_BRANCH"
