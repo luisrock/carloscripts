@@ -111,14 +111,9 @@ fi
 log_with_timestamp "Executando deploy..."
 cd "$SITE_DIR"
 
-# Usar o script de deploy unificado
-if [ -f "deploy.sh" ]; then
-    log_with_timestamp "Usando script de deploy personalizado"
-    DEPLOY_SCRIPT="./deploy.sh"
-else
-    log_with_timestamp "Usando script de deploy padrão"
-    DEPLOY_SCRIPT="/home/carlo/scripts/carlo-deploy-unified.sh"
-fi
+# Usar sempre o script de deploy unificado (igual ao deploy manual)
+log_with_timestamp "Usando script de deploy unificado"
+DEPLOY_SCRIPT="/home/carlo/scripts/carlo-deploy-unified.sh"
 
 # Executar deploy
 if bash "$DEPLOY_SCRIPT" "$DOMAIN" "$BRANCH" "$COMMIT_SHA" >> "$LOG_FILE" 2>&1; then

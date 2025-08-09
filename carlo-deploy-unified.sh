@@ -327,7 +327,27 @@ EOF
     fi
 
     # Executar deploy script customizado (se existir) antes de configurar supervisor
+    # Atualizar supervisor para nova release ANTES de executar deploy.sh
+    log "Atualizando configuração do supervisor..."
     PORT=$(jq -r '.port // 5000' "$SITE_DIR/status.json" 2>/dev/null || echo "5000")
+
+    sudo tee "/etc/supervisor/conf.d/$DOMAIN.conf" > /dev/null << EOF
+[program:$DOMAIN]
+command=$SITE_DIR/current/venv/bin/gunicorn -c $SITE_DIR/current/gunicorn.conf app:app
+directory=$SITE_DIR/current
+user=vito
+autostart=false
+autorestart=true
+redirect_stderr=true
+stdout_logfile=$SITE_DIR/logs/app.log
+environment=PORT=$PORT,GITHUB_BRANCH="$BRANCH",DEPLOY_TIMESTAMP="$RELEASE_TIMESTAMP"
+EOF
+
+    # Atualizar symlink current ANTES de executar deploy.sh
+    log "Atualizando link current..."
+    ln -sfn "$RELEASE_DIR" "$SITE_DIR/current"
+
+    # Executar script de deploy se existir (APÓS criar link current)
     CANDIDATES=(
       "$RELEASE_DIR/deploy.sh"
       "$SITE_DIR/deploy.sh"
@@ -358,30 +378,28 @@ EOF
         fi
     done
 
-    # Atualizar supervisor para nova release
-    log "Atualizando configuração do supervisor..."
-    # PORT já pode ter sido definido acima; garantir fallback
-    PORT=${PORT:-$(jq -r '.port // 5000' "$SITE_DIR/status.json" 2>/dev/null || echo "5000")}
-
-    sudo tee "/etc/supervisor/conf.d/$DOMAIN.conf" > /dev/null << EOF
-[program:$DOMAIN]
-command=$RELEASE_DIR/venv/bin/gunicorn -c $RELEASE_DIR/gunicorn.conf app:app
-directory=$RELEASE_DIR
-user=vito
-autostart=false
-autorestart=true
-redirect_stderr=true
-stdout_logfile=$SITE_DIR/logs/app.log
-environment=PORT=$PORT,GITHUB_BRANCH="$BRANCH",DEPLOY_TIMESTAMP="$RELEASE_TIMESTAMP"
-EOF
-
     # Recarregar supervisor
     sudo supervisorctl reread
     sudo supervisorctl update
 
-    # Iniciar site
-    log "Iniciando site com nova release..."
-    sudo supervisorctl start "$DOMAIN"
+    # Iniciar/reiniciar site de forma inteligente
+    log "Verificando status do supervisor..."
+    SUPERVISOR_STATUS=$(sudo supervisorctl status "$DOMAIN" 2>/dev/null | grep -o "RUNNING\|STOPPED\|FATAL" || echo "NOT_FOUND")
+    
+    log "Supervisor status: $SUPERVISOR_STATUS"
+    
+    if [ "$SUPERVISOR_STATUS" = "NOT_FOUND" ]; then
+        log "Processo não encontrado, recarregando configuração..."
+        sudo supervisorctl reread
+        sudo supervisorctl update
+        sudo supervisorctl start "$DOMAIN"
+    elif [ "$SUPERVISOR_STATUS" = "RUNNING" ]; then
+        log "Reiniciando processo em execução..."
+        sudo supervisorctl restart "$DOMAIN"
+    else
+        log "Iniciando processo parado..."
+        sudo supervisorctl start "$DOMAIN"
+    fi
 
     # Aguardar inicialização
     sleep 3
@@ -390,15 +408,19 @@ EOF
     if sudo supervisorctl status "$DOMAIN" | grep -q "RUNNING"; then
         success "Deploy concluído com sucesso!"
         
-        # Atualizar symlink current
-        ln -sfn "$RELEASE_DIR" "$SITE_DIR/current"
-        
         # Limpar releases antigas (manter últimas 5)
         log "Limpando releases antigas..."
         cd "$SITE_DIR/releases"
         ls -t | tail -n +6 | xargs rm -rf 2>/dev/null || true
         
-        # Atualizar status
+        # Atualizar status preservando configurações de webhook
+        # Ler configurações existentes de webhook
+        EXISTING_AUTO_DEPLOY=$(jq -r '.auto_deploy_enabled // null' "$SITE_DIR/status.json" 2>/dev/null)
+        EXISTING_WEBHOOK_ID=$(jq -r '.webhook_id // null' "$SITE_DIR/status.json" 2>/dev/null)
+        EXISTING_WEBHOOK_SECRET=$(jq -r '.webhook_secret // null' "$SITE_DIR/status.json" 2>/dev/null)
+        EXISTING_WEBHOOK_URL=$(jq -r '.webhook_url // null' "$SITE_DIR/status.json" 2>/dev/null)
+        
+        # Criar novo status.json preservando configurações de webhook
         cat > "$SITE_DIR/status.json" << EOF
 {
     "domain": "$DOMAIN",
@@ -410,7 +432,11 @@ EOF
     "last_deploy": "$(date -Iseconds)",
     "github_repo": "$GITHUB_REPO",
     "github_branch": "$BRANCH",
-    "deploy_timestamp": "$RELEASE_TIMESTAMP"
+    "deploy_timestamp": "$RELEASE_TIMESTAMP"$([ "$EXISTING_AUTO_DEPLOY" != "null" ] && echo ",
+    \"auto_deploy_enabled\": $EXISTING_AUTO_DEPLOY")$([ "$EXISTING_WEBHOOK_ID" != "null" ] && echo ",
+    \"webhook_id\": $EXISTING_WEBHOOK_ID")$([ "$EXISTING_WEBHOOK_SECRET" != "null" ] && echo ",
+    \"webhook_secret\": \"$EXISTING_WEBHOOK_SECRET\"")$([ "$EXISTING_WEBHOOK_URL" != "null" ] && echo ",
+    \"webhook_url\": \"$EXISTING_WEBHOOK_URL\"")
 }
 EOF
         

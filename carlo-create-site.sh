@@ -239,9 +239,24 @@ fi
 # sudo supervisorctl restart "$DOMAIN-celery" || true
 # sudo supervisorctl restart "$DOMAIN-celery-beat" || true
 
-# 6) Reiniciar aplicação
-echo "[deploy.sh] Reiniciando via supervisor"
-sudo supervisorctl restart "$DOMAIN"
+# 6) Iniciar/Reiniciar aplicação de forma inteligente
+echo "[deploy.sh] Verificando status do supervisor..."
+SUPERVISOR_STATUS=$(sudo supervisorctl status "$DOMAIN" 2>/dev/null | grep -o "RUNNING\\|STOPPED\\|FATAL" || echo "NOT_FOUND")
+
+echo "[deploy.sh] Supervisor status: $SUPERVISOR_STATUS"
+
+if [ "$SUPERVISOR_STATUS" = "NOT_FOUND" ]; then
+    echo "[deploy.sh] Processo não encontrado, recarregando configuração..."
+    sudo supervisorctl reread
+    sudo supervisorctl update
+    sudo supervisorctl start "$DOMAIN"
+elif [ "$SUPERVISOR_STATUS" = "RUNNING" ]; then
+    echo "[deploy.sh] Reiniciando processo em execução..."
+    sudo supervisorctl restart "$DOMAIN"
+else
+    echo "[deploy.sh] Iniciando processo parado..."
+    sudo supervisorctl start "$DOMAIN"
+fi
 
 echo "[deploy.sh] Concluído"
 EOF
@@ -533,7 +548,23 @@ EOF
 SUPERVISOR_CONF="/etc/supervisor/conf.d/$DOMAIN.conf"
 log "Configurando supervisor..."
 
-sudo tee "$SUPERVISOR_CONF" > /dev/null << EOF
+# Para sites GitHub, usar sistema de releases; para outros, usar public/
+if [ -n "$GITHUB_REPO" ]; then
+    # Configuração para sites GitHub (sistema de releases)
+    sudo tee "$SUPERVISOR_CONF" > /dev/null << EOF
+[program:$DOMAIN]
+command=$SITE_DIR/current/venv/bin/gunicorn -c $SITE_DIR/current/gunicorn.conf app:app
+directory=$SITE_DIR/current
+user=vito
+autostart=false
+autorestart=true
+redirect_stderr=true
+stdout_logfile=$SITE_DIR/logs/app.log
+environment=PORT=$PORT,GITHUB_REPO="$GITHUB_REPO",GITHUB_BRANCH="$GITHUB_BRANCH"
+EOF
+else
+    # Configuração para sites manuais (public/)
+    sudo tee "$SUPERVISOR_CONF" > /dev/null << EOF
 [program:$DOMAIN]
 command=$SITE_DIR/public/venv/bin/gunicorn -c $SITE_DIR/gunicorn.conf app:app
 directory=$SITE_DIR/public
@@ -544,6 +575,7 @@ redirect_stderr=true
 stdout_logfile=$SITE_DIR/logs/app.log
 environment=PORT=$PORT,SITE_CREATED="$(date +'%Y-%m-%d %H:%M:%S')"
 EOF
+fi
 
 # Criar configuração Nginx
 NGINX_CONF="/home/carlo/nginx/sites-available/$DOMAIN"

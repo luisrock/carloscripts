@@ -151,7 +151,7 @@ PORT=$(jq -r '.port // 5000' "$SITE_DIR/status.json" 2>/dev/null || echo "5000")
 cat > "/home/carlo/nginx/sites-available/$DOMAIN" << EOF
 server {
     listen 80;
-    server_name $DOMAIN www.$DOMAIN;
+    server_name $DOMAIN;
     
     # Logs
     access_log $SITE_DIR/logs/access.log;
@@ -197,8 +197,7 @@ CERTBOT_CMD="sudo certbot certonly --webroot \
     --agree-tos \
     --no-eff-email \
     --cert-name $DOMAIN \
-    -d $DOMAIN \
-    -d www.$DOMAIN"
+    -d $DOMAIN"
 
 if [ "$FORCE" = true ]; then
     CERTBOT_CMD="$CERTBOT_CMD --force-renewal"
@@ -239,13 +238,13 @@ if eval $CERTBOT_CMD; then
 # Configuração SSL para $DOMAIN
 server {
     listen 80;
-    server_name $DOMAIN www.$DOMAIN;
+    server_name $DOMAIN;
     return 301 https://\$server_name\$request_uri;
 }
 
 server {
     listen 443 ssl;
-    server_name $DOMAIN www.$DOMAIN;
+    server_name $DOMAIN;
     
     # SSL Configuration
     ssl_certificate /home/carlo/ssl/$DOMAIN/live/fullchain.pem;
@@ -324,7 +323,6 @@ EOF
     echo ""
     echo "🌐 URLs de acesso:"
     echo "   https://$DOMAIN"
-    echo "   https://www.$DOMAIN"
     echo ""
     echo "🔧 Comandos úteis:"
     echo "   ./carlo-ssl-renew.sh $DOMAIN    # Renovar certificado"

@@ -123,21 +123,52 @@ if [ -f "/etc/supervisor/conf.d/$DOMAIN.conf" ]; then
     sudo supervisorctl update
 fi
 
-# Remover configuração do Nginx
-NGINX_CONF="/home/carlo/nginx/sites-available/$DOMAIN"
-if [ -f "$NGINX_CONF" ]; then
-    log "Removendo configuração do Nginx..."
-    sudo rm -f "$NGINX_CONF"
-    
-    # Remover link simbólico se existir
-    if [ -L "/etc/nginx/sites-enabled/$DOMAIN" ]; then
-        sudo rm -f "/etc/nginx/sites-enabled/$DOMAIN"
+# Remover configuração do Nginx (múltiplas localizações)
+NGINX_LOCATIONS=(
+    "/home/carlo/nginx/sites-available/$DOMAIN"
+    "/etc/nginx/sites-available/$DOMAIN"
+)
+
+for NGINX_CONF in "${NGINX_LOCATIONS[@]}"; do
+    if [ -f "$NGINX_CONF" ]; then
+        log "Removendo configuração do Nginx: $NGINX_CONF"
+        sudo rm -f "$NGINX_CONF"
     fi
-    
-    # Recarregar Nginx
-    if sudo nginx -t; then
-        sudo systemctl reload nginx
+done
+
+# Remover links simbólicos do Nginx
+NGINX_ENABLED_LOCATIONS=(
+    "/etc/nginx/sites-enabled/$DOMAIN"
+    "/home/carlo/nginx/sites-enabled/$DOMAIN"
+)
+
+for NGINX_ENABLED in "${NGINX_ENABLED_LOCATIONS[@]}"; do
+    if [ -L "$NGINX_ENABLED" ] || [ -f "$NGINX_ENABLED" ]; then
+        log "Removendo link nginx: $NGINX_ENABLED"
+        sudo rm -f "$NGINX_ENABLED"
     fi
+done
+
+# Remover certificados SSL e configurações relacionadas
+SSL_LOCATIONS=(
+    "/home/carlo/ssl/$DOMAIN"
+    "/etc/letsencrypt/live/$DOMAIN"
+    "/etc/letsencrypt/archive/$DOMAIN"
+    "/etc/letsencrypt/renewal/$DOMAIN.conf"
+)
+
+for SSL_PATH in "${SSL_LOCATIONS[@]}"; do
+    if [ -e "$SSL_PATH" ]; then
+        log "Removendo certificados SSL: $SSL_PATH"
+        sudo rm -rf "$SSL_PATH"
+    fi
+done
+
+# Recarregar Nginx após todas as remoções
+if sudo nginx -t 2>/dev/null; then
+    sudo systemctl reload nginx
+else
+    warning "Nginx config inválida após remoções, mas continuando..."
 fi
 
 # Fazer backup antes de deletar (opcional)
@@ -164,6 +195,7 @@ if [ ! -d "$SITE_DIR" ]; then
         echo "   ✅ Site parado"
         echo "   ✅ Configuração do supervisor removida"
         echo "   ✅ Configuração do Nginx removida"
+        echo "   ✅ Certificados SSL removidos"
         echo "   ✅ Diretório do site deletado"
         if [ -f "$BACKUP_FILE" ]; then
             echo "   ✅ Backup criado: $BACKUP_FILE"
