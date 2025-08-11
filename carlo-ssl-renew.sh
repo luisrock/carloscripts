@@ -140,7 +140,7 @@ server {
     
     # Arquivos estáticos
     location /static/ {
-        alias $site_dir/public/static/;
+        alias $site_dir/current/static/;
         expires 30d;
     }
 }
@@ -223,7 +223,7 @@ server {
     
     # Arquivos estáticos
     location /static/ {
-        alias $site_dir/public/static/;
+        alias $site_dir/current/static/;
         expires 30d;
         add_header Cache-Control "public, immutable";
     }
